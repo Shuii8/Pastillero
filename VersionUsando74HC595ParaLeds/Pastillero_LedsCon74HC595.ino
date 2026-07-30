@@ -13,20 +13,25 @@
   Estructura general del programa
   ============================================================
 
+  Hardware asumido:
+  - Arduino Nano clásico
+  - RTC DS3231
+  - LCD 1602 con adaptador I2C
+  - Joystick analógico con botón
+  - Servomotor
+  - 74HC595 para 8 LEDs
 */
 
 // ============================================================
 // CONFIGURACIÓN GENERAL
 // ============================================================
   constexpr uint8_t LONGITUD_NOMBRE = 14;
-  constexpr uint8_t MAX_ALARMAS = 9;
-  constexpr uint8_t NUM_GAVETAS = 9;
+  constexpr uint8_t MAX_ALARMAS = 8;
+  constexpr uint8_t NUM_GAVETAS = 8;
   uint8_t alarmasPendientes = 0;
   uint32_t minutoRTCProcesado = 0xFFFFFFFFUL;
   constexpr uint8_t ANGULO_CENTRO_SERVO = 90;
   constexpr unsigned long TIEMPO_CENTRADO_SERVO_MS = 500;
-  constexpr unsigned long DURACION_ALARMA_SIN_RESPUESTA_MS =
-  5UL * 60UL * 1000UL;
 
   int8_t indiceAlarmaEliminar = -1;
   uint8_t opcionConfirmacionEliminar = 1;
@@ -114,18 +119,11 @@
   //Servomotor
     constexpr uint8_t PIN_SERVO = 9;
 
-  // LEDs indicadores de las ocho gavetas
-    constexpr uint8_t PINES_LEDS[NUM_GAVETAS] = {
-      3,   // Gaveta 1
-      4,   // Gaveta 2
-      5,   // Gaveta 3
-      6,   // Gaveta 4
-      7,   // Gaveta 5
-      8,   // Gaveta 6
-      10,  // Gaveta 7
-      11,   // Gaveta 8
-      12   // Gaveta 9
-    };
+  // Registro 74HC595 para LEDs
+    constexpr uint8_t PIN_595_DATOS = 4;
+    constexpr uint8_t PIN_595_RELOJ = 5;
+    constexpr uint8_t PIN_595_LATCH = 6;
+
 // ============================================================
 // CONFIGURACIÓN DEL LCD
 // ============================================================
@@ -362,7 +360,7 @@
     void detenerCampana();
 
   //Leds
-    void inicializarLeds();
+    void escribirLeds(uint8_t patron);
     void encenderGaveta(uint8_t gaveta);
     void apagarTodasLasGavetas();
 
@@ -413,9 +411,6 @@
     Serial.begin(115200); 
 
     inicializarPines();
-
-    //pruebaLeds();
-
     inicializarPantalla();
     inicializarServo();
     cargarAlarmas();
@@ -462,7 +457,15 @@
       pinMode(PIN_Y, INPUT);
       pinMode(BOTTON, INPUT_PULLUP);
  
-      inicializarLeds(); 
+      pinMode(PIN_595_DATOS, OUTPUT);
+      pinMode(PIN_595_RELOJ, OUTPUT);
+      pinMode(PIN_595_LATCH, OUTPUT);
+
+      digitalWrite(PIN_595_DATOS, LOW);
+      digitalWrite(PIN_595_RELOJ, LOW);
+      digitalWrite(PIN_595_LATCH, LOW);
+
+      apagarTodasLasGavetas();
 
     }
     void inicializarPantalla(){
@@ -557,7 +560,8 @@
 
         case EstadoSistema::MOSTRAR_DOSIS:
 
-          detenerCampana(); 
+          detenerCampana();
+          apagarTodasLasGavetas();
           mostrarDosisActiva();       
           break; 
 
@@ -861,7 +865,7 @@
     }
 
   // ============================================================
-  // ESTADO AJUSTE RELOJ
+  // ESTADO MOSTRAR DOSIS
   // ============================================================
     void EstadoAjustarReloj(
         EventosJoystick evento
@@ -996,47 +1000,17 @@
   // ESTADO DE ALARMA
   // ============================================================
     void EstadoAlarmaActiva(EventosJoystick evento) {
-      // Mantener la campana oscilando sin bloquear el programa.
       actualizarCampana();
 
-      unsigned long tiempoEnAlarma =
-        millis() - momentoEntradaEstado;
-
       bool puedeReconocerse =
-        tiempoEnAlarma >= RETARDO_RECONOCER_ALARMA_MS;
+        millis() - momentoEntradaEstado >=
+        RETARDO_RECONOCER_ALARMA_MS;
 
-      // ----------------------------------------------------------
-      // La persona respondió antes de los cinco minutos
-      // ----------------------------------------------------------
       if (
         puedeReconocerse &&
         evento != EventosJoystick::NINGUNO
       ) {
-        // Se detiene el sonido, pero el LED permanece encendido.
         cambiarEstado(EstadoSistema::MOSTRAR_DOSIS);
-        return;
-      }
-
-      // ----------------------------------------------------------
-      // Nadie respondió durante cinco minutos
-      // ----------------------------------------------------------
-      if (
-        tiempoEnAlarma >=
-        DURACION_ALARMA_SIN_RESPUESTA_MS
-      ) {
-        Serial.println(
-          F("Alarma finalizada sin respuesta")
-        );
-
-        // Al entrar a NORMAL también se detienen las salidas.
-        cambiarEstado(EstadoSistema::NORMAL);
-
-        // Si existen otras alarmas pendientes, atender la siguiente.
-        if (alarmasPendientes != 0) {
-          activarSiguienteAlarmaPendiente();
-        }
-
-        return;
       }
     }
 
@@ -1054,7 +1028,7 @@
       if (!tiempoCumplido && !botonPresionado) {
         return;
       }
-      apagarTodasLasGavetas();
+
       cambiarEstado(EstadoSistema::NORMAL);
 
       // Si había otra alarma a la misma hora, se activa ahora.
@@ -3006,39 +2980,29 @@
   // ============================================================
   // CONTROL DE LOS LEDS
   // ============================================================
-    void inicializarLeds() {
-      for (uint8_t i = 0; i < NUM_GAVETAS; i++) {
-        pinMode(PINES_LEDS[i], OUTPUT);
-        digitalWrite(PINES_LEDS[i], LOW);
-      }
+    void escribirLeds(uint8_t patron) {
+      digitalWrite(PIN_595_LATCH, LOW);
+
+      shiftOut(
+        PIN_595_DATOS,
+        PIN_595_RELOJ,
+        MSBFIRST,
+        patron
+      );
+
+      digitalWrite(PIN_595_LATCH, HIGH);
     }
-    void apagarTodasLasGavetas() {
-      for (uint8_t i = 0; i < NUM_GAVETAS; i++) {
-        digitalWrite(PINES_LEDS[i], LOW);
-      }
-    }
+
     void encenderGaveta(uint8_t gaveta) {
-      // Protección contra números de gaveta inválidos.
       if (gaveta >= NUM_GAVETAS) {
         apagarTodasLasGavetas();
         return;
       }
 
-      // Solo debe quedar encendido un LED.
-      apagarTodasLasGavetas();
-
-      digitalWrite(PINES_LEDS[gaveta], HIGH);
+      uint8_t patron = static_cast<uint8_t>(1U << gaveta);
+      escribirLeds(patron);
     }
 
-    void pruebaLeds() {
-      for (uint8_t i = 0; i < NUM_GAVETAS; i++) {
-        encenderGaveta(i);
-
-        Serial.print(F("Probando gaveta "));
-        Serial.println(i + 1);
-
-        delay(500);
-      }
-
-      apagarTodasLasGavetas();
+    void apagarTodasLasGavetas() {
+      escribirLeds(0x00);
     }
