@@ -19,8 +19,8 @@
 // CONFIGURACIÓN GENERAL
 // ============================================================
   constexpr uint8_t LONGITUD_NOMBRE = 14;
-  constexpr uint8_t MAX_ALARMAS = 9;
-  constexpr uint8_t NUM_GAVETAS = 9;
+  constexpr uint16_t MAX_ALARMAS = 9;
+  constexpr uint16_t NUM_GAVETAS = 9;
   uint8_t alarmasPendientes = 0;
   uint32_t minutoRTCProcesado = 0xFFFFFFFFUL;
   constexpr uint8_t ANGULO_CENTRO_SERVO = 90;
@@ -1264,7 +1264,6 @@
         }
       }
     }
-   
 
   // ============================================================
   // ESTADO ELIMINARA ALARMA
@@ -2087,51 +2086,64 @@
   // ============================================================
   // JOYSTICK
   // ============================================================
-    EventosJoystick leerJoystick(){
-      // ----------------------------------------------------------
-      // Variables persistentes del botón
-      // ----------------------------------------------------------
+    EventosJoystick leerJoystick() {
+  // ----------------------------------------------------------
+  // Variables persistentes
+  // ----------------------------------------------------------
+  static bool lecturaAnteriorBoton = HIGH;
+  static bool estadoEstableBoton = HIGH;
+  static unsigned long ultimoCambioBoton = 0;
 
-      static bool lecturaAnteriorBoton = HIGH;
-      static bool estadoEstableBoton = HIGH;
-      static unsigned long ultimoCambioBoton = 0;
- 
+  static bool joystickPreparado = true;
 
-      // Evita repetir continuamente una dirección mientras
-      // el joystick se mantiene inclinado. 
-      static bool joystickPreparado = true;
+  unsigned long ahoraMs = millis();
 
-      // ----------------------------------------------------------
-      // Lectura del botón
-      // ----------------------------------------------------------
+  // ----------------------------------------------------------
+  // Lectura y antirrebote del botón
+  // ----------------------------------------------------------
+    bool lecturaBoton = digitalRead(BOTTON);
 
-      bool lecturaBoton =
-        digitalRead(BOTTON);
-
-      // Detectar un cambio físico en la lectura
       if (lecturaBoton != lecturaAnteriorBoton) {
         lecturaAnteriorBoton = lecturaBoton;
-        ultimoCambioBoton = millis();
+        ultimoCambioBoton = ahoraMs;
       }
 
-      // Confirmar que el cambio se mantuvo durante el tiempo
-      // de antirrebote
       if (
-        millis() - ultimoCambioBoton >= ANTIRREBOTE_BOTON_MS &&
+        ahoraMs - ultimoCambioBoton >= ANTIRREBOTE_BOTON_MS &&
         lecturaBoton != estadoEstableBoton
       ) {
         estadoEstableBoton = lecturaBoton;
 
-        // Con INPUT_PULLUP, LOW significa botón presionado
         if (estadoEstableBoton == LOW) {
+          /*
+            Después de pulsar el botón, obligamos al joystick
+            a regresar al centro antes de aceptar direcciones.
+          */
+          joystickPreparado = false;
+
           return EventosJoystick::BOTON;
         }
       }
 
-      // ----------------------------------------------------------
-      // Lectura de los ejes analógicos
-      // ----------------------------------------------------------
+      /*
+        Mientras el botón está:
+        - físicamente presionado,
+        - confirmado como presionado,
+        - o en transición de antirrebote,
 
+        no se leen los ejes analógicos.
+      */
+      if (
+        lecturaBoton == LOW ||
+        estadoEstableBoton == LOW ||
+        lecturaBoton != estadoEstableBoton
+      ) {
+        return EventosJoystick::NINGUNO;
+      }
+
+      // ----------------------------------------------------------
+      // Lectura de los ejes
+      // ----------------------------------------------------------
       int valorX = analogRead(PIN_X);
       int valorY = analogRead(PIN_Y);
 
@@ -2143,34 +2155,29 @@
         valorY >= JOYSTICK_CENTRO_BAJO &&
         valorY <= JOYSTICK_CENTRO_ALTO;
 
-      // Cuando regresa al centro se permite generar otro evento
+      // Solo se vuelve a habilitar después de regresar al centro.
       if (ejeXCentrado && ejeYCentrado) {
         joystickPreparado = true;
         return EventosJoystick::NINGUNO;
       }
 
-      // Si todavía no ha regresado al centro, no repetir evento
       if (!joystickPreparado) {
         return EventosJoystick::NINGUNO;
       }
 
-      EventosJoystick evento = EventosJoystick::NINGUNO;
+      EventosJoystick evento =
+        EventosJoystick::NINGUNO;
 
-      // Determinar cuál eje tiene el movimiento mayor
       int distanciaX = abs(valorX - 512);
       int distanciaY = abs(valorY - 512);
 
       if (distanciaX >= distanciaY) {
-        // Movimiento horizontal
-
         if (valorX <= JOYSTICK_LIMITE_BAJO) {
           evento = EventosJoystick::IZQUIERDA;
         } else if (valorX >= JOYSTICK_LIMITE_ALTO) {
           evento = EventosJoystick::DERECHA;
         }
       } else {
-        // Movimiento vertical
-
         if (valorY <= JOYSTICK_LIMITE_BAJO) {
           evento = EventosJoystick::ARRIBA;
         } else if (valorY >= JOYSTICK_LIMITE_ALTO) {
@@ -2182,9 +2189,7 @@
         joystickPreparado = false;
       }
 
-
       return evento;
-
     }
 
 
@@ -2258,7 +2263,7 @@
         for (uint8_t i = 0; i < MAX_ALARMAS; i++) {
           if (alarmaCoincideAhora(alarmas[i])) {
             alarmasPendientes |=
-              static_cast<uint8_t>(1U << i);
+              static_cast<uint16_t>(1U << i);
 
             Serial.print(F("Alarma pendiente: "));
             Serial.println(i);
@@ -2277,8 +2282,8 @@
     }
     void activarSiguienteAlarmaPendiente() {
       for (uint8_t i = 0; i < MAX_ALARMAS; i++) {
-        uint8_t mascara =
-          static_cast<uint8_t>(1U << i);
+        uint16_t mascara =
+          static_cast<uint16_t>(1U << i);
 
         if ((alarmasPendientes & mascara) == 0) {
           continue;
@@ -2286,7 +2291,7 @@
 
         // Retirar la alarma de la cola.
         alarmasPendientes &=
-          static_cast<uint8_t>(~mascara);
+          static_cast<uint16_t>(~mascara);
 
         // Protección por si fue eliminada.
         if (alarmas[i].activa != 1) {
@@ -2948,7 +2953,7 @@
 
       // Retirar también cualquier activación pendiente.
       alarmasPendientes &=
-        static_cast<uint8_t>(~(1U << indice));
+        static_cast<uint16_t>(~(1U << indice));
 
       Serial.print(F("Alarma eliminada: "));
       Serial.println(indice);
