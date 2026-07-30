@@ -21,7 +21,7 @@
   constexpr uint8_t LONGITUD_NOMBRE = 14;
   constexpr uint16_t MAX_ALARMAS = 9;
   constexpr uint16_t NUM_GAVETAS = 9;
-  uint8_t alarmasPendientes = 0;
+  uint16_t alarmasPendientes = 0;
   uint32_t minutoRTCProcesado = 0xFFFFFFFFUL;
   constexpr uint8_t ANGULO_CENTRO_SERVO = 90;
   constexpr unsigned long TIEMPO_CENTRADO_SERVO_MS = 500;
@@ -1781,6 +1781,18 @@
 
     // -------------------- SELECTOR DE LETRA --------------------
     void mostrarSelectorLetra() {
+      if (filaLetra > 1) {
+        filaLetra = 0;
+      }
+
+      if (
+        columnaLetra >=
+        COLUMNAS_FILA_LETRAS[filaLetra]
+      ) {
+        columnaLetra =
+          COLUMNAS_FILA_LETRAS[filaLetra] - 1;
+      }
+
       lcd.noBlink();
       lcd.clear();
 
@@ -1795,14 +1807,31 @@
     }
 
     char obtenerLetraSeleccionada() {
-      static const char FILA_SUPERIOR[] = "ABCDEFGHIJKLM<_";
-      static const char FILA_INFERIOR[] = "NOPQRSTUVWXYZ";
-
+      // Primera fila: A-M, borrar y espacio
       if (filaLetra == 0) {
-        return FILA_SUPERIOR[columnaLetra];
+        // Columnas 0-12 corresponden a A-M
+        if (columnaLetra <= 12) {
+          return static_cast<char>('A' + columnaLetra);
+        }
+
+        // Columna 13: borrar
+        if (columnaLetra == 13) {
+          return '<';
+        }
+
+        // Columna 14: espacio
+        if (columnaLetra == 14) {
+          return '_';
+        }
       }
 
-      return FILA_INFERIOR[columnaLetra];
+      // Segunda fila: N-Z
+      if (filaLetra == 1 && columnaLetra <= 12) {
+        return static_cast<char>('N' + columnaLetra);
+      }
+
+      // Posición inválida
+      return '\0';
     }
 
     void procesarSelectorLetra(EventosJoystick evento) {
@@ -1836,6 +1865,21 @@
         cambioPantalla = true;
       } else if (evento == EventosJoystick::BOTON) {
         char seleccion = obtenerLetraSeleccionada();
+
+        Serial.print(F("Seleccion -> fila: "));
+        Serial.print(filaLetra);
+
+        Serial.print(F(", columna: "));
+        Serial.print(columnaLetra);
+
+        Serial.print(F(", caracter: "));
+
+        if (seleccion == '\0') {
+          Serial.println(F("INVALIDO"));
+          return;
+        }
+
+        Serial.println(seleccion);
 
         if (seleccion == '<' || seleccion == '_') {
           alarmaEnEdicion.nombre[posicionNombre] = ' ';
@@ -2087,21 +2131,21 @@
   // JOYSTICK
   // ============================================================
     EventosJoystick leerJoystick() {
-  // ----------------------------------------------------------
-  // Variables persistentes
-  // ----------------------------------------------------------
-  static bool lecturaAnteriorBoton = HIGH;
-  static bool estadoEstableBoton = HIGH;
-  static unsigned long ultimoCambioBoton = 0;
+      // ----------------------------------------------------------
+      // Variables persistentes
+      // ----------------------------------------------------------
+      static bool lecturaAnteriorBoton = HIGH;
+      static bool estadoEstableBoton = HIGH;
+      static unsigned long ultimoCambioBoton = 0;
 
-  static bool joystickPreparado = true;
+      static bool joystickPreparado = true;
 
-  unsigned long ahoraMs = millis();
+      unsigned long ahoraMs = millis();
 
-  // ----------------------------------------------------------
-  // Lectura y antirrebote del botón
-  // ----------------------------------------------------------
-    bool lecturaBoton = digitalRead(BOTTON);
+      // ----------------------------------------------------------
+      // Lectura y antirrebote del botón
+      // ----------------------------------------------------------
+      bool lecturaBoton = digitalRead(BOTTON);
 
       if (lecturaBoton != lecturaAnteriorBoton) {
         lecturaAnteriorBoton = lecturaBoton;
